@@ -45,6 +45,7 @@ let
     criteria = "-count[version-lag,request],-count[version-lag,changed],-count[avoid-version,request]";
     depopts = true;
     best-effort = false;
+    solver = null;
     dev = false;
     with-test = false;
     with-doc = false;
@@ -177,9 +178,33 @@ in rec {
 
       query = concatStringsSep "," (attrValues (mapAttrs pkgRequest packages));
 
+      mccs = bootstrapPackages.pkgsBuildBuild.stdenv.mkDerivation {
+        name = "mccs";
+        src = bootstrapPackages.fetchurl {
+          url = "http://deb.debian.org/debian/pool/main/m/mccs/mccs_1.1.orig.tar.gz";
+          hash = "sha256-tppRnuqDWp9IkkGqIcXF0UMJRzmQb+ArAxlEfku3vsk=";
+        };
+        buildInputs = with bootstrapPackages.pkgsBuildBuild; [ gcc bison flex glpk ];
+        patchPhase = ''
+            sed -i 's/values\.h/limits.h/' sources/*.c
+            sed -i 's/MAXLONG/LONG_MAX/' sources/*.c
+            sed -i 's/MINLONG/LONG_MAX/' sources/*.c
+            sed -i 's/\(bool operator.*\)) {/\1) const {/' libsrcs/cudf.h
+          '';
+        buildPhase = ''
+            make USEGLPK=1
+          '';
+        installPhase = ''
+            mkdir -p $out/bin
+            cp mccs $out/bin/.
+          '';
+      };
+
       resolve-drv = with args;
         runCommand "resolve" {
-          nativeBuildInputs = [ opam bootstrapPackages.ocaml ];
+          nativeBuildInputs =
+            [ opam bootstrapPackages.ocaml ]
+            ++ (if solver == "mccs" then [ mccs ] else []);
           OPAMCLI = "2.0";
         } ''
           export OPAMROOT=$NIX_BUILD_TOP/opam
@@ -194,6 +219,7 @@ in rec {
             ${optionalString with-test "--with-test"} \
             ${optionalString with-doc "--doc"} \
             ${optionalString best-effort "--best-effort"} \
+            ${optionalString (!isNull solver) "--solver=${solver}"} \
             ${optionalString (!isNull env) "--environment '${environment}'"} \
             ${optionalString (!isNull criteria) "--criteria='${criteria}'"} \
             | tee $out
